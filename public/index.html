@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Better Recs</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+    }
+    h1 {
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #888;
+      margin-bottom: 24px;
+    }
+    form {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #333;
+      border-radius: 4px;
+      background: #2a2a2a;
+      color: #e0e0e0;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #1db954;
+    }
+    button {
+      padding: 12px 24px;
+      font-size: 16px;
+      background: #1db954;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #1ed760;
+    }
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    .error {
+      background: #ff4444;
+      color: white;
+      padding: 12px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #888;
+    }
+    .results {
+      margin-top: 24px;
+    }
+    .seed-artists {
+      background: #2a2a2a;
+      padding: 16px;
+      border-radius: 4px;
+      margin-bottom: 24px;
+    }
+    .seed-artists h3 {
+      margin-top: 0;
+      color: #888;
+    }
+    .seed-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .seed-tag {
+      background: #333;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 14px;
+    }
+    .recommendations h2 {
+      margin-bottom: 16px;
+    }
+    .rec-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid #333;
+    }
+    .rec-item:hover {
+      background: #2a2a2a;
+    }
+    .rec-name {
+      font-size: 16px;
+    }
+    .rec-stats {
+      display: flex;
+      gap: 16px;
+      color: #888;
+      font-size: 14px;
+    }
+    .rec-rank {
+      color: #555;
+      margin-right: 12px;
+      min-width: 24px;
+    }
+    .spotify-link {
+      color: #1db954;
+      text-decoration: none;
+      margin-left: 8px;
+    }
+    .spotify-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <h1>Better Recs</h1>
+  <p class="subtitle">Music recommendations powered by Last.fm's collaborative filtering</p>
+
+  <form id="playlist-form">
+    <input
+      type="text"
+      id="playlist-url"
+      placeholder="Paste a Spotify playlist URL..."
+      required
+    >
+    <button type="submit" id="submit-btn">Get Recommendations</button>
+  </form>
+
+  <div id="error" class="error" style="display: none;"></div>
+  <div id="loading" class="loading" style="display: none;">Finding recommendations...</div>
+  <div id="results" class="results" style="display: none;"></div>
+
+  <script>
+    const form = document.getElementById('playlist-form');
+    const input = document.getElementById('playlist-url');
+    const submitBtn = document.getElementById('submit-btn');
+    const errorDiv = document.getElementById('error');
+    const loadingDiv = document.getElementById('loading');
+    const resultsDiv = document.getElementById('results');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const playlistUrl = input.value.trim();
+      if (!playlistUrl) return;
+
+      // Reset UI
+      errorDiv.style.display = 'none';
+      resultsDiv.style.display = 'none';
+      loadingDiv.style.display = 'block';
+      submitBtn.disabled = true;
+
+      try {
+        const response = await fetch('/api/recommendations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ playlistUrl }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to get recommendations');
+        }
+
+        displayResults(data);
+      } catch (err) {
+        errorDiv.textContent = err.message;
+        errorDiv.style.display = 'block';
+      } finally {
+        loadingDiv.style.display = 'none';
+        submitBtn.disabled = false;
+      }
+    });
+
+    function displayResults(data) {
+      const { seedArtists, recommendations, totalFound } = data;
+
+      let html = `
+        <div class="seed-artists">
+          <h3>Seed Artists (${seedArtists.length})</h3>
+          <div class="seed-list">
+            ${seedArtists.map(a => `<span class="seed-tag">${escapeHtml(a.name)}</span>`).join('')}
+          </div>
+        </div>
+
+        <div class="recommendations">
+          <h2>Recommendations</h2>
+          <p style="color: #888; margin-bottom: 16px;">Found ${totalFound} similar artists. Showing top ${recommendations.length}.</p>
+          ${recommendations.map((rec, i) => `
+            <div class="rec-item">
+              <div>
+                <span class="rec-rank">${i + 1}.</span>
+                <span class="rec-name">${escapeHtml(rec.name)}</span>
+                <a class="spotify-link" href="https://open.spotify.com/search/${encodeURIComponent(rec.name)}" target="_blank">Open in Spotify</a>
+              </div>
+              <div class="rec-stats">
+                <span title="Similar to this many seed artists">freq: ${rec.frequency}</span>
+                <span title="Average similarity score">match: ${rec.averageMatch.toFixed(2)}</span>
+                <span title="Combined score (frequency × match)">score: ${rec.combinedScore.toFixed(2)}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+
+      resultsDiv.innerHTML = html;
+      resultsDiv.style.display = 'block';
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
