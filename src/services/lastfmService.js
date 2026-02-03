@@ -48,47 +48,60 @@ class LastFmService {
    * Get similar artists for multiple artists
    * This is the core of our recommendation engine
    * Returns aggregated results from all input artists
+   *
+   * @param {Array} artistsWithWeights - Array of { name, weight } objects
+   *   weight is a decimal (0-1) representing playlist influence
+   *   If just an array of strings, weights default to equal distribution
    */
-  async getSimilarArtistsForMultiple(artistNames) {
+  async getSimilarArtistsForMultiple(artistsWithWeights) {
+    // Support both simple array of names and weighted objects
+    const artists = artistsWithWeights.map(a =>
+      typeof a === 'string' ? { name: a, weight: 1 / artistsWithWeights.length } : a
+    );
+
     // Make all API calls in parallel for speed
-    const promises = artistNames.map(name => this.getSimilarArtists(name));
+    const promises = artists.map(a => this.getSimilarArtists(a.name));
     const results = await Promise.all(promises);
 
-    // Flatten all results into one array
-    const allSimilarArtists = results.flat();
+    // Track weighted scores for each similar artist
+    const artistData = new Map();
 
-    // Count how many times each artist appears
-    // Artists that appear multiple times are similar to more of your seed artists
-    const artistFrequency = new Map();
-    const artistScores = new Map();
+    results.forEach((similarArtists, index) => {
+      const seedWeight = artists[index].weight;
 
-    allSimilarArtists.forEach(artist => {
-      const name = artist.name;
-      
-      if (!artistFrequency.has(name)) {
-        artistFrequency.set(name, 0);
-        artistScores.set(name, []);
-      }
-      
-      artistFrequency.set(name, artistFrequency.get(name) + 1);
-      artistScores.get(name).push(artist.match);
+      similarArtists.forEach(similar => {
+        const name = similar.name;
+
+        if (!artistData.has(name)) {
+          artistData.set(name, {
+            frequency: 0,
+            weightedScoreSum: 0,
+            scores: [],
+          });
+        }
+
+        const data = artistData.get(name);
+        data.frequency += 1;
+        // Weight the match score by the seed artist's playlist weight
+        data.weightedScoreSum += similar.match * seedWeight;
+        data.scores.push(similar.match);
+      });
     });
 
     // Calculate aggregate score for each artist
-    const aggregatedArtists = Array.from(artistFrequency.keys()).map(name => {
-      const frequency = artistFrequency.get(name);
-      const scores = artistScores.get(name);
-      const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const aggregatedArtists = Array.from(artistData.keys()).map(name => {
+      const data = artistData.get(name);
+      const avgScore = data.scores.reduce((a, b) => a + b, 0) / data.scores.length;
 
       return {
         name: name,
-        frequency: frequency,           // How many seed artists is this similar to
-        averageMatch: avgScore,         // Average similarity score
-        combinedScore: frequency * avgScore,  // Simple ranking metric
+        frequency: data.frequency,           // How many seed artists is this similar to
+        averageMatch: avgScore,              // Average similarity score (unweighted)
+        combinedScore: data.weightedScoreSum, // Weighted score for ranking
       };
     });
 
-    // Sort by combined score (high frequency + high similarity = best match)
+    // Sort by combined score (weighted similarity = best match)
     return aggregatedArtists.sort((a, b) => b.combinedScore - a.combinedScore);
   }
 }
